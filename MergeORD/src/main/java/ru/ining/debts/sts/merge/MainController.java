@@ -16,16 +16,9 @@ import ru.ining.debts.sts.merge.pojo.SR.SecondRest;
 import ru.ining.debts.sts.merge.pojo.XML.Xml;
 
 import java.sql.*;
-import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.*;
-import java.util.Date;
 
-
-import static java.text.DateFormat.Field.TIME_ZONE;
 import static ru.ining.debts.sts.merge.Const.*;
 
 
@@ -261,11 +254,17 @@ public class MainController {
 //                    }
 //                    else {
                     System.out.println("Не найден на а-3;  Ord: " + uin);
-                    if (Integer.parseInt(nd.getSrvCode()) < 5){
-                        updateNewDebtsCode((Integer.parseInt(nd.getSrvCode()) + 1) + "", nd.getId(), msSqlUrl);
+                    if (Integer.parseInt(nd.getSrvCode()) < 4) {
+                        if(sdf2.format(nd.getEntdte()).equals(DEFAULT_DATE_STRING))
+                            updateNewDebtsCodeEnt((Integer.parseInt(nd.getSrvCode()) + 1) + "", nd.getId(), msSqlUrl);
+                        else
+                            updateNewDebtsCode((Integer.parseInt(nd.getSrvCode()) + 1) + "", nd.getId(), msSqlUrl);
                         cntUpdate++;
                     }else {
-                        updateNewDebtsCodeRcd("8", "1", nd.getId(), msSqlUrl);
+                        if(sdf2.format(nd.getEntdte()).equals(DEFAULT_DATE_STRING))
+                            updateNewDebtsCodeRcdEnt("9", "1", nd.getId(), msSqlUrl);
+                        else
+                            updateNewDebtsCodeRcd("9", "1", nd.getId(), msSqlUrl);
                         cntUpdate++;
                     }
                 }
@@ -405,23 +404,24 @@ public class MainController {
         Connection conn = DriverManager.getConnection(url);
         String sql = "UPDATE newDebts SET Vclstamp = '"+newDebt.getVclstamp()+"', Vcl = "+newDebt.getVcl()+", Reason = '"+newDebt.getNaznachenie()+
                 "', Tcard = '"+newDebt.getTcard()+"', Sum = "+newDebt.getSum()+", SumHalf = "+newDebt.getSumHalf()+", Regnum = '"+newDebt.getRegnum()+
-                "', place = '"+newDebt.getPlace()+"', inn = '"+newDebt.getInn()+"', ufk = '"+newDebt.getUfk()+"', kpp = '"+newDebt.getKpp()+"', kbk = '"
-                +newDebt.getKbk()+"', raschSchet = '"+newDebt.getRaschSchet()+"', bik = '"+newDebt.getBik()+"', bankPol = '"+newDebt.getBankPol()+"', oktomo = '"
-                +newDebt.getOktomo()+"', naznachenie = '"+newDebt.getNaznachenie()+"', Lstchgby = '"+newDebt.getLstchgby()+
+                "', place = '"+newDebt.getPlace()+"', inn = '"+newDebt.getInn()+"', ufk = '"+newDebt.getUfk()+"', kpp = '"+newDebt.getKpp()+
+                "', kbk = '"+newDebt.getKbk()+"', raschSchet = '"+newDebt.getRaschSchet()+"', bik = '"+newDebt.getBik()+"', bankPol = '"+newDebt.getBankPol()+
+                "', oktomo = '"+newDebt.getOktomo()+"', naznachenie = '"+newDebt.getNaznachenie()+"', Lstchgby = '"+newDebt.getLstchgby()+
                 "', Lstchkdte = '"+sdf3.format(newDebt.getLstchkdte())+
                 "', Dbtdte = '"+sdf3.format(newDebt.getDbtdte())+
                 "', Ofndte = '"+sdf3.format(newDebt.getOfndte())+
                 "', Paytodte = '"+sdf3.format(newDebt.getPaytodte())+
-                "', PaytoHalf = '"+sdf3.format(newDebt.getPaytoHalf())
-                +"', Brn = "+newDebt.getBrn()+", Brnname = '"+newDebt.getBrnname()+
+                "', PaytoHalf = '"+sdf3.format(newDebt.getPaytoHalf())+
+                "', Brn = "+newDebt.getBrn()+", Brnname = '"+newDebt.getBrnname()+
                 "', Lstchgdte = '"+sdf3.format(newDebt.getLstchgdte())+
                 "', srvCode = "+newDebt.getSrvCode()+" WHERE ID = "+newDebt.getId();
+
         return conn.createStatement().executeUpdate(sql);
     }
 
     public static int updateNewDebtsCode(String code, String id, String url) throws Exception {
         Connection dbConnection = DriverManager.getConnection(url);
-        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?  WHERE ID = ?");
+        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ? WHERE ID = ?");
         String now = sdf3.format(new java.util.Date().getTime());
 
         ps.setInt(1, Integer.parseInt(code));
@@ -430,13 +430,46 @@ public class MainController {
         ps.setString(4, now);
         ps.setInt(5, Integer.parseInt(id));
 
+        return ps.executeUpdate();
+    }
+
+    public static int updateNewDebtsCodeEnt(String code, String id, String url) throws Exception {
+        Connection dbConnection = DriverManager.getConnection(url);
+        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?, Entby = ?, Entdte = ? WHERE ID = ?");
+        String now = sdf3.format(new java.util.Date().getTime());
+
+        ps.setInt(1, Integer.parseInt(code));
+        ps.setString(2, SERVICE_NAME);
+        ps.setString(3, now);
+        ps.setString(4, now);
+        ps.setString(6, SERVICE_NAME);
+        ps.setString(7, now);
+        ps.setInt(5, Integer.parseInt(id));
+
+        return ps.executeUpdate();
+    }
+
+    public static int updateNewDebtsCodeRcdEnt(String code, String rcdsts, String id, String url) throws Exception {
+        Connection dbConnection = DriverManager.getConnection(url);
+        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET Rcdsts = ?, srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?, Entby = ?, Entdte = ? WHERE ID = ?");
+        String now = sdf3.format(new java.util.Date().getTime());
+
+        ps.setInt(1, Integer.parseInt(rcdsts));
+        ps.setInt(2, Integer.parseInt(code));
+        ps.setString(3, SERVICE_NAME);
+        ps.setString(4, now);
+        ps.setString(5, now);
+        ps.setString(6, SERVICE_NAME);
+        ps.setString(7, now);
+        ps.setInt(8, Integer.parseInt(id));
+
 
         return ps.executeUpdate();
     }
 
     public static int updateNewDebtsCodeRcd(String code, String rcdsts, String id, String url) throws Exception {
         Connection dbConnection = DriverManager.getConnection(url);
-        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET Rcdsts = ?, srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?  WHERE ID = ?");
+        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET Rcdsts = ?, srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ? WHERE ID = ?");
         String now = sdf3.format(new java.util.Date().getTime());
 
         ps.setInt(1, Integer.parseInt(rcdsts));
@@ -476,7 +509,7 @@ public class MainController {
         try {
             Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
             Connection conn = DriverManager.getConnection(url);
-            String sql = "SELECT Ordinance, Tcard, Entby, Entdte, Lstchgby, Lstchkdte, Lstchgdte, ID, Srvcode, inn FROM newDebts WHERE Srvcode < 8";
+            String sql = "SELECT Ordinance, Tcard, Entby, Entdte, Lstchgby, Lstchkdte, Lstchgdte, ID, Srvcode, inn FROM newDebts WHERE Srvcode < 9";
             ResultSet rs = conn.createStatement().executeQuery(sql);
 
             while(rs.next()) {
