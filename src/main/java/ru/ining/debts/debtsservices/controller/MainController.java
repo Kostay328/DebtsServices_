@@ -21,7 +21,7 @@ public class MainController {
     }
 
     @RestController
-    public class ForexController {
+    public class Controller {
         @ResponseBody
         @RequestMapping(
                 value = "/get",

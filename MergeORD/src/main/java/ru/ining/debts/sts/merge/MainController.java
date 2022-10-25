@@ -2,8 +2,11 @@ package ru.ining.debts.sts.merge;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -19,15 +22,17 @@ import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
+import static org.slf4j.LoggerFactory.getLogger;
 import static ru.ining.debts.sts.merge.Const.*;
 
 
-@Controller
+@Component
+@Slf4j
 public class MainController {
     @Value("${json.url}")
     public String jsonUrl;
-//    private final WebClient url = WebClient.create("http://json-api:8080/get");
-    private final WebClient url = WebClient.create("http://localhost:8080/get");
+    private final WebClient url = WebClient.create("http://json-api:8080/get");
+//    private final WebClient url = WebClient.create("http://localhost:8080/get");
 
     @Value("${user.mssql.url}")
     public String msSqlUrl;
@@ -128,11 +133,11 @@ public class MainController {
                         oktmo = v;
                     if(f.getOrder() == 512 || f.getName().contains("iRecipientKBK"))
                         kbk = v;
-                    if(f.getDescription().contains("Сумма штрафа, руб."))
+                    if(f.getOrder() == 552)
                         sum = v;
-                    if(f.getDescription().contains("Скидка") && f.getDescription().contains("%"))
+                    if(f.getOrder() == 554)
                         hsd = v.replace("активна до","").trim();
-                    if(f.getDescription().contains("К оплате")) {
+                    if(f.getOrder() == 555) {
                         if(!sum.equals(""))
                             hs = v;
                         else
@@ -144,6 +149,7 @@ public class MainController {
                     nd.setTcard(sts);
 
                 if(inn.length() > 0) {
+
                     try {
                         //TODO
                         String s = secondRest.getItem().getTemplate().getAdditionalProperties().get("parameters").toString();
@@ -193,6 +199,7 @@ public class MainController {
                 nd.setRegnum(v.getRegnum());
 
                 boolean srvCodeZero = nd.getSrvCode().equals("0");
+                boolean srvCodeFive = nd.getSrvCode().equals("5");
                 boolean entdteEmpty = false;
 
                 //Найден на a-3
@@ -223,7 +230,7 @@ public class MainController {
                     nd.setSrvCode("5");
                     nd.setDbtdte(new Timestamp(sdf2.parse(date).getTime()));
                     try {
-                        nd.setPaytoHalf(new Timestamp(sdf1.parse(hsd).getTime()));
+                        nd.setPaytoHalf(new Timestamp(sdf2.parse(hsd).getTime()));
                     }catch (Exception e){
                         System.out.println("Не найдена дата оплаты со скидкой");
                         nd.setPaytoHalf(new Timestamp(sdf2.parse(DEFAULT_DATE_STRING).getTime()));
@@ -235,37 +242,28 @@ public class MainController {
                     else
                         nd.setBrnname("");
 
+                    if(!srvCodeFive){
+                        System.out.println("Запись нового");
+                        updateNewDebts(nd, msSqlUrl, srvCodeZero || entdteEmpty);
+                    }else {
+                        System.out.println("Есть в базе меняется только дата прошлой проверки");
+                        updateLstchkdte(nd.getId(), msSqlUrl);
+                    }
 
-                    System.out.println("Запись нового");
-                    if(srvCodeZero || entdteEmpty)
-                        updateNewDebts(nd, msSqlUrl);
-                    else
-                        updateNewDebtsNoEnt(nd, msSqlUrl);
                     cntAdd++;
                 } else {
-//                    if(!nd.getSrvCode().equals("5")) {
-//                        System.out.println("Не найден на а-3 но в базе записан как активный");
-//                        if(Integer.parseInt(nd.getSrvCode())<5)
-//                            updateNewDebtsCode((Integer.parseInt(nd.getSrvCode()) + 1)+"", nd.getId());
-//                        else {
-//                            nd.setRcdsts("1");
-//                            nd.setSrvCode("9");
-//                        }
-//                    }
-//                    else {
-                    System.out.println("Не найден на а-3;  Ord: " + uin);
-                    if (Integer.parseInt(nd.getSrvCode()) < 4) {
-                        if(sdf2.format(nd.getEntdte()).equals(DEFAULT_DATE_STRING))
-                            updateNewDebtsCodeEnt((Integer.parseInt(nd.getSrvCode()) + 1) + "", nd.getId(), msSqlUrl);
-                        else
-                            updateNewDebtsCode((Integer.parseInt(nd.getSrvCode()) + 1) + "", nd.getId(), msSqlUrl);
-                        cntUpdate++;
+                    if(nd.getSrvCode().equals("5")) {
+                        System.out.println("Нет на а-3 но в базе записан как активный;  Ord: " + uin);
+                        updateNewDebtsCodeRcd("8", "1", nd.getId(), msSqlUrl, false);
                     }else {
-                        if(sdf2.format(nd.getEntdte()).equals(DEFAULT_DATE_STRING))
-                            updateNewDebtsCodeRcdEnt("9", "1", nd.getId(), msSqlUrl);
-                        else
-                            updateNewDebtsCodeRcd("9", "1", nd.getId(), msSqlUrl);
-                        cntUpdate++;
+                        System.out.println("Нет на а-3;  Ord: " + uin);
+                        if (Integer.parseInt(nd.getSrvCode()) < 3) {
+                            updateNewDebtsCode((Integer.parseInt(nd.getSrvCode()) + 1) + "", nd.getId(), msSqlUrl, sdf2.format(nd.getEntdte()).equals(DEFAULT_DATE_STRING));
+                            cntUpdate++;
+                        }else {
+                            updateNewDebtsCodeRcd("9", "1", nd.getId(), msSqlUrl, sdf2.format(nd.getEntdte()).equals(DEFAULT_DATE_STRING));
+                            cntUpdate++;
+                        }
                     }
                 }
             }
@@ -276,16 +274,21 @@ public class MainController {
         return cnt;
     }
 
-    public static int updateNewDebts(NewDebts newDebt, String url) throws Exception {
+    public static int updateNewDebts(NewDebts newDebt, String url, boolean needEnt) throws Exception {
         Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
         Connection conn = DriverManager.getConnection(url);
+        String ent = "";
+        if(needEnt)
+            ent = "', Entby = '"+newDebt.getEntby()+"', Entdte = '"+sdf3.format(newDebt.getEntdte());
+
         String sql = "UPDATE newDebts SET Vclstamp = '"+newDebt.getVclstamp()+"', Vcl = "+newDebt.getVcl()+
                 ", Reason = '"+newDebt.getNaznachenie()+"', Tcard = '"+newDebt.getTcard()+"', Sum = "
                 +newDebt.getSum()+", SumHalf = "+newDebt.getSumHalf()+", Regnum = '"+newDebt.getRegnum()+
                 "', place = '"+newDebt.getPlace()+"', inn = '"+newDebt.getInn()+"', ufk = '"+newDebt.getUfk()+
                 "', kpp = '"+newDebt.getKpp()+"', kbk = '"+newDebt.getKbk()+"', raschSchet = '"+newDebt.getRaschSchet()+
                 "', bik = '"+newDebt.getBik()+"', bankPol = '"+newDebt.getBankPol()+"', oktomo = '"+newDebt.getOktomo()+
-                "', naznachenie = '"+newDebt.getNaznachenie()+"', Entby = '"+newDebt.getEntby()+"', Entdte = '"+sdf3.format(newDebt.getEntdte())+
+                "', naznachenie = '"+newDebt.getNaznachenie()+
+                ent+
                 "', Lstchgby = '"+newDebt.getLstchgby()+
                 "', Lstchkdte = '"+sdf3.format(newDebt.getLstchkdte())+
                 "', Dbtdte = '"+sdf3.format(newDebt.getDbtdte())+
@@ -399,59 +402,52 @@ public class MainController {
 //    }
 
 
-    public static int updateNewDebtsNoEnt(NewDebts newDebt, String url) throws Exception {
-        Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
-        Connection conn = DriverManager.getConnection(url);
-        String sql = "UPDATE newDebts SET Vclstamp = '"+newDebt.getVclstamp()+"', Vcl = "+newDebt.getVcl()+", Reason = '"+newDebt.getNaznachenie()+
-                "', Tcard = '"+newDebt.getTcard()+"', Sum = "+newDebt.getSum()+", SumHalf = "+newDebt.getSumHalf()+", Regnum = '"+newDebt.getRegnum()+
-                "', place = '"+newDebt.getPlace()+"', inn = '"+newDebt.getInn()+"', ufk = '"+newDebt.getUfk()+"', kpp = '"+newDebt.getKpp()+
-                "', kbk = '"+newDebt.getKbk()+"', raschSchet = '"+newDebt.getRaschSchet()+"', bik = '"+newDebt.getBik()+"', bankPol = '"+newDebt.getBankPol()+
-                "', oktomo = '"+newDebt.getOktomo()+"', naznachenie = '"+newDebt.getNaznachenie()+"', Lstchgby = '"+newDebt.getLstchgby()+
-                "', Lstchkdte = '"+sdf3.format(newDebt.getLstchkdte())+
-                "', Dbtdte = '"+sdf3.format(newDebt.getDbtdte())+
-                "', Ofndte = '"+sdf3.format(newDebt.getOfndte())+
-                "', Paytodte = '"+sdf3.format(newDebt.getPaytodte())+
-                "', PaytoHalf = '"+sdf3.format(newDebt.getPaytoHalf())+
-                "', Brn = "+newDebt.getBrn()+", Brnname = '"+newDebt.getBrnname()+
-                "', Lstchgdte = '"+sdf3.format(newDebt.getLstchgdte())+
-                "', srvCode = "+newDebt.getSrvCode()+" WHERE ID = "+newDebt.getId();
+    public static int updateLstchkdte(String id, String url) throws Exception {
+        Connection dbConnection = DriverManager.getConnection(url);
+        String sql = "UPDATE newDebts SET Lstchkdte = ? WHERE ID = ?";
 
-        return conn.createStatement().executeUpdate(sql);
+        PreparedStatement ps = dbConnection.prepareStatement(sql);
+        String now = sdf3.format(new java.util.Date().getTime());
+
+        ps.setString(1, now);
+        ps.setInt(2, Integer.parseInt(id));
+
+        return ps.executeUpdate();
     }
 
-    public static int updateNewDebtsCode(String code, String id, String url) throws Exception {
+
+    public static int updateNewDebtsCode(String code, String id, String url, boolean needEnt) throws Exception {
         Connection dbConnection = DriverManager.getConnection(url);
-        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ? WHERE ID = ?");
+        String sql = "UPDATE newDebts SET srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?, Entby = ?, Entdte = ? WHERE ID = ?";
+        //обход ошибки числа переменных
+        if(!needEnt)
+            sql = sql.replace(", Entby = ?, Entdte = ?","");
+
+        PreparedStatement ps = dbConnection.prepareStatement(sql);
         String now = sdf3.format(new java.util.Date().getTime());
 
         ps.setInt(1, Integer.parseInt(code));
         ps.setString(2, SERVICE_NAME);
         ps.setString(3, now);
         ps.setString(4, now);
-        ps.setInt(5, Integer.parseInt(id));
+        if(needEnt) {
+            ps.setString(5, SERVICE_NAME);
+            ps.setString(6, now);
+            ps.setInt(7, Integer.parseInt(id));
+        } else
+            ps.setInt(5, Integer.parseInt(id));
 
         return ps.executeUpdate();
     }
 
-    public static int updateNewDebtsCodeEnt(String code, String id, String url) throws Exception {
+    public static int updateNewDebtsCodeRcd(String code, String rcdsts, String id, String url, boolean needEnt) throws Exception {
         Connection dbConnection = DriverManager.getConnection(url);
-        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?, Entby = ?, Entdte = ? WHERE ID = ?");
-        String now = sdf3.format(new java.util.Date().getTime());
+        String sql = "UPDATE newDebts SET Rcdsts = ?, srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?, Entby = ?, Entdte = ? WHERE ID = ?";
+        //обход ошибки числа переменных
+        if(!needEnt)
+            sql = sql.replace(", Entby = ?, Entdte = ?","");
 
-        ps.setInt(1, Integer.parseInt(code));
-        ps.setString(2, SERVICE_NAME);
-        ps.setString(3, now);
-        ps.setString(4, now);
-        ps.setString(6, SERVICE_NAME);
-        ps.setString(7, now);
-        ps.setInt(5, Integer.parseInt(id));
-
-        return ps.executeUpdate();
-    }
-
-    public static int updateNewDebtsCodeRcdEnt(String code, String rcdsts, String id, String url) throws Exception {
-        Connection dbConnection = DriverManager.getConnection(url);
-        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET Rcdsts = ?, srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ?, Entby = ?, Entdte = ? WHERE ID = ?");
+        PreparedStatement ps = dbConnection.prepareStatement(sql);
         String now = sdf3.format(new java.util.Date().getTime());
 
         ps.setInt(1, Integer.parseInt(rcdsts));
@@ -459,57 +455,23 @@ public class MainController {
         ps.setString(3, SERVICE_NAME);
         ps.setString(4, now);
         ps.setString(5, now);
-        ps.setString(6, SERVICE_NAME);
-        ps.setString(7, now);
-        ps.setInt(8, Integer.parseInt(id));
+        if(needEnt) {
+            ps.setString(6, SERVICE_NAME);
+            ps.setString(7, now);
+            ps.setInt(8, Integer.parseInt(id));
+        } else
+            ps.setInt(6, Integer.parseInt(id));
 
 
         return ps.executeUpdate();
     }
-
-    public static int updateNewDebtsCodeRcd(String code, String rcdsts, String id, String url) throws Exception {
-        Connection dbConnection = DriverManager.getConnection(url);
-        PreparedStatement ps = dbConnection.prepareStatement("UPDATE newDebts SET Rcdsts = ?, srvCode = ?, Lstchgby = ?, Lstchkdte = ?, Lstchgdte = ? WHERE ID = ?");
-        String now = sdf3.format(new java.util.Date().getTime());
-
-        ps.setInt(1, Integer.parseInt(rcdsts));
-        ps.setInt(2, Integer.parseInt(code));
-        ps.setString(3, SERVICE_NAME);
-        ps.setString(4, now);
-        ps.setString(5, now);
-        ps.setInt(6, Integer.parseInt(id));
-
-
-        return ps.executeUpdate();
-    }
-
-//    public static Vclmst getVclmst(String Tcard) {
-//        Vclmst nd = new Vclmst();
-//        try {
-//            Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
-//            Connection conn = DriverManager.getConnection(msSqlUrl);
-//            String sql = "SELECT Vcl, Vclstamp, Regnum, Tcard FROM Vclmst WHERE Tcard = '" + Tcard + "'";
-//            ResultSet rs = conn.createStatement().executeQuery(sql);
-//
-//            rs.next();
-//            nd.setVcl(rs.getString("Vcl"));
-//            nd.setVclstamp(rs.getString("Vclstamp"));
-//            nd.setRegnum(rs.getString("Regnum"));
-//            nd.setTcard(rs.getString("Tcard"));
-//
-//        } catch (Exception throwables) {
-//            throwables.printStackTrace();
-//        }
-//
-//        return nd;
-//    }
 
     public static List<NewDebts> getOrdinanceLst(String url) {
         List<NewDebts> resLst = new ArrayList<>();
         try {
             Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
             Connection conn = DriverManager.getConnection(url);
-            String sql = "SELECT Ordinance, Tcard, Entby, Entdte, Lstchgby, Lstchkdte, Lstchgdte, ID, Srvcode, inn FROM newDebts WHERE Srvcode < 9";
+            String sql = "SELECT Ordinance, Tcard, Entby, Entdte, Lstchgby, Lstchkdte, Lstchgdte, ID, Srvcode, inn FROM newDebts WHERE Srvcode < 8";
             ResultSet rs = conn.createStatement().executeQuery(sql);
 
             while(rs.next()) {

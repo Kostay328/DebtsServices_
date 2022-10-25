@@ -1,4 +1,4 @@
-package ru.ining.debts.sts.merge.pojo.DB;
+package ru.ining.debts.sts.get.pojo;
 
 
 public class Vclmst {
